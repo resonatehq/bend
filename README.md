@@ -43,7 +43,7 @@ here rather than there.
 
 ```
 bend code/kernel.bend        # does it check?
-bend code/PROOF.bend              # "All terms check" once the laws are discharged
+bend code/PROOF.bend         # "All terms check" once the laws are discharged
 bend base Char               # settles assumption 1 in notes/001
 ```
 
