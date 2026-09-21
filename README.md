@@ -22,13 +22,14 @@ depth 4. A law has no depth bound.
 
 ## Status
 
-First cut. **Not yet checked by the compiler** — see below.
+`prelude.bend` and `kernel.bend` check. Six of the twelve laws are proven; six
+are open. `bend code/PROOF.bend` reports the six.
 
 ```
 code/prelude.bend   ordering, strings, Dewey ids: what Base does not hand us
 code/kernel.bend    the promise half of the protocol
-code/LAWS.bend      two claims and the seven lemmas they decompose into
-code/PROOF.bend     two lemmas discharged, five open, both claims open
+code/LAWS.bend      two claims and the ten lemmas they decompose into
+code/PROOF.bend     six discharged, six open, both claims still open
 notes/              what Bend forced, and why each fork went the way it did
 ```
 
@@ -47,12 +48,12 @@ bend code/PROOF.bend         # "All terms check" once the laws are discharged
 bend base Char               # settles assumption 1 in notes/001
 ```
 
-This cut was written without a Bend toolchain to hand — `bend-lang.com` was
-unreachable from where it was written and the compiler is not on npm — so it
-has been checked only for internal consistency: every name it calls is defined,
-in this repository or in the twelve Base names listed in `notes/001`. Expect a
-first `bend` run to be a conversation. The structure is the claim; the syntax
-is a draft.
+`bend-lang.com` is unreachable from this environment and the compiler is not on
+npm, but `git clone https://github.com/bendlang/bend` works and `bun
+bend2/main.ts` is the CLI. `notes/002` records what the first real run changed:
+definitions must precede use, a recursive function's branch helper takes the
+recursive result as a parameter, and a fold's shrinking argument must come
+first.
 
 ## The two laws
 
@@ -68,11 +69,15 @@ Discharging them is the milestone that decides whether the rest of the kernel
 is worth writing in this language; nothing else in this repository matters
 until they check.
 
-Neither is discharged. `LAWS.bend` names the seven lemmas they decompose into
-and `PROOF.bend` writes the argument out; two of the seven are attempted, and
-the two idioms that block the rest — eliminating a false `Maybe` equality, and
-case-splitting on a computed `Bool` inside a proof — are named there. Both are
-questions for a compiler, not about the protocol.
+Neither is discharged yet. Six of the ten lemmas under them are:
+`timer_at_irrelevant`, `settled_is_not_expired`, `expire_one_skips_settled`,
+`expire_one_keeps_id`, `committed_is_some` and its step lemma.
+
+The four that remain are the ones that look an id up in a list, and they all
+want the same missing piece: a reflection lemma for `String.eq`, tying the
+decidable equality to propositional equality. Base has only `Equal.cong`,
+`Equal.sym` and `Equal.trans`, so that lemma is ours to prove. It is the next
+piece of work, and `notes/002` says why.
 
 Attempting the first proof has already paid for itself once: `wake` was handed
 `Promise.is_expired` where it needed `Promise.is_live`, which is not its
