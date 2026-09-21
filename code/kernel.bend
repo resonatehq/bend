@@ -228,6 +228,13 @@ def Promise.is_expired(+p: Promise, +now: Nat) -> Bool:
   Bool.and(PState.is_pending(Promise.state(p)),
     Nat.is_ge(now, Promise.timeout_at(p)))
 
+# Not the negation of `is_expired`: a settled promise is neither expired nor
+# live. The sweep asks the first question, the settlement chain asks this one,
+# and conflating them silently stops every resume.
+def Promise.is_live(+p: Promise, +now: Nat) -> Bool:
+  Bool.and(PState.is_pending(Promise.state(p)),
+    Nat.is_lt(now, Promise.timeout_at(p)))
+
 # No record-update syntax in the language, so every change rebuilds the whole
 # constructor. These are the only three shapes this cut needs.
 def Promise.settle_to(p: Promise, st: PState, v: Value, at: Nat) -> Promise:
@@ -617,7 +624,7 @@ def wake.task(mt: Maybe<&2, Task>, out: Out, +ob: Object, +awaiter: String, +id:
     case Some{+tk}:
       # The awaiter is itself settled or past its deadline: a sweep will fulfil
       # it rather than resume it.
-      wake.live(Promise.is_expired(Object.promise(ob), now), out, ob, tk, awaiter, id, now, cfg)
+      wake.live(Promise.is_live(Object.promise(ob), now), out, ob, tk, awaiter, id, now, cfg)
 
 def wake.live(live: Bool, out: Out, +ob: Object, +tk: Task, +awaiter: String, +id: String,
   +now: Nat, +cfg: KernelCfg) -> Out:
@@ -1308,3 +1315,56 @@ def PromiseRecord.born_eq(a: PromiseRecord, b: PromiseRecord) -> Bool:
       Bool.and(Value.is_eq(p1, p2),
         Bool.and(Entries.is_eq(t1, t2),
           Bool.and(Nat.is_eq(to1, to2), Nat.is_eq(ca1, ca2))))
+
+# ---------------------------------------------------------------------------
+# Total projections, for stating laws
+# ---------------------------------------------------------------------------
+
+# `committed` answers a Maybe because nothing in its type says a step emits a
+# SetDocument. Every step does — `linearize` emits exactly one on both
+# branches — but that is a fact to be proved, not assumed, and a law that has
+# to discharge it before saying anything is a law about the wrong thing. So:
+# fall back to the document that came in. The obligation does not disappear,
+# it becomes `committed_is_some`, which is proved once and on its own.
+def committed_or(d: Document, fx: List<&2, Effect>) -> Document:
+  committed_or.on(committed(fx), d)
+
+def committed_or.on(c: Maybe<&2, Document>, d: Document) -> Document:
+  match c:
+    case Some{d2}:
+      d2
+    case None{}:
+      d
+
+def step_doc(+d: Document, +r: Req, +now: Nat, +cfg: KernelCfg) -> Document:
+  committed_or(d, Step.fx(handle_external(d, r, now, cfg)))
+
+def record_at(d: Document, +id: String) -> Maybe<&2, PromiseRecord>:
+  record_at.on(Document.get(d, id), id)
+
+def record_at.on(mo: Maybe<&2, Object>, +id: String) -> Maybe<&2, PromiseRecord>:
+  match mo:
+    case None{}:
+      None{}
+    case Some{ob}:
+      Some{Promise.to_record(id, Object.promise(ob))}
+
+# What a create wrote and nothing after it may touch, as a value, so that
+# "the birth fields are preserved" is one equation rather than four.
+type BirthFields is Data:
+  Birth{param: Value, tags: List<&2, Entry>, timeout_at: Nat, created_at: Nat}
+
+def PromiseRecord.birth(r: PromiseRecord) -> BirthFields:
+  match r:
+    case PRec{_, _, p, _, t, to, ca, _}:
+      Birth{p, t, to, ca}
+
+def birth_at(d: Document, +id: String) -> Maybe<&2, BirthFields>:
+  birth_at.on(record_at(d, id))
+
+def birth_at.on(mr: Maybe<&2, PromiseRecord>) -> Maybe<&2, BirthFields>:
+  match mr:
+    case None{}:
+      None{}
+    case Some{r}:
+      Some{PromiseRecord.birth(r)}

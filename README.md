@@ -27,8 +27,8 @@ First cut. **Not yet checked by the compiler** — see below.
 ```
 code/prelude.bend   ordering, strings, Dewey ids: what Base does not hand us
 code/kernel.bend    the promise half of the protocol
-code/LAWS.bend      two claims, stated
-code/PROOF.bend     their proofs, open
+code/LAWS.bend      two claims and the seven lemmas they decompose into
+code/PROOF.bend     two lemmas discharged, five open, both claims open
 notes/              what Bend forced, and why each fork went the way it did
 ```
 
@@ -67,3 +67,15 @@ Here they are claims about every document, every request and every instant.
 Discharging them is the milestone that decides whether the rest of the kernel
 is worth writing in this language; nothing else in this repository matters
 until they check.
+
+Neither is discharged. `LAWS.bend` names the seven lemmas they decompose into
+and `PROOF.bend` writes the argument out; two of the seven are attempted, and
+the two idioms that block the rest — eliminating a false `Maybe` equality, and
+case-splitting on a computed `Bool` inside a proof — are named there. Both are
+questions for a compiler, not about the protocol.
+
+Attempting the first proof has already paid for itself once: `wake` was handed
+`Promise.is_expired` where it needed `Promise.is_live`, which is not its
+negation. A suspended awaiter was never resumed and an expired-but-pending one
+was resumed where the sweep should have fulfilled it. The argument for the law
+walks straight through that call site, which is how it surfaced.

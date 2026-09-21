@@ -1,52 +1,125 @@
-# PROOF.bend — the proofs of LAWS.bend. OPEN.
+# PROOF.bend — the proofs of LAWS.bend. TWO DISCHARGED, FIVE OPEN.
 #
-# Both laws are stated and neither is discharged. `?TODO` leaves a goal open,
-# so `bend PROOF.bend` will not say "All terms check" until these are filled.
-# That is the honest state of this cut: the claims are pinned down, the
-# arguments are not.
+# Read the status line above before anything else. `bend PROOF.bend` will not
+# say "All terms check" until the `?TODO`s are gone, and the two that are
+# written here have never been through a compiler either.
 #
-# What each proof has to do, from reading the kernel rather than from having
-# run one:
+# The argument, on paper, for preserved_settled_promise_record. A settled
+# promise at `id` has to survive three things in order.
 #
-# preserved_settled_promise_record
-#   Case on `r`. `PromiseGet` writes nothing, so the committed document is the
-#   swept one and the obligation reduces to the sweep case below.
-#   `PromiseCreate` reaches `promise_create.existing`, which returns the stored
-#   object untouched when the id is present — that branch is reflexivity.
-#   `PromiseSettle` reaches `promise_settle.pending`, whose False branch (the
-#   promise is not pending, so it is settled) returns without touching the
-#   document. The work is the sweep: `sweep.expire.one` rewrites a promise only
-#   where `Promise.is_expired` holds, and `is_expired` conjoins
-#   `PState.is_pending`, so a settled promise is untouched — that is a lemma
-#   about `sweep.expire`, by induction on the object list. Then
-#   `trigger_settlement` has to be shown to leave a settled promise's *record*
-#   alone: it clears callbacks and listeners, which are not record fields, and
-#   `Promise.to_record` drops both. That is the one step where the record
-#   projection is doing real work, and it is why the law is about records
-#   rather than about promises.
+# 1. The sweep's phase 1. `sweep.expire` maps `sweep.expire.one` over every
+#    object, and rewrites one only where `Promise.is_expired` holds.
+#    `is_expired` conjoins `PState.is_pending`, which is False for a settled
+#    promise, so `Bool.and` is False and the object passes through.
+#    -> expire_one_skips_settled, then expire_preserves_settled by induction.
 #
-# preserved_promise_birth_fields
-#   The same case split, and strictly easier: no writer in this cut constructs
-#   a `Pr` with a param, tags, timeoutAt or createdAt other than the ones it
-#   destructured, except `insert_promise`, which only runs when
-#   `Document.get` answered None. `Promise.settle_to`, `clear_callbacks` and
-#   `clear_listeners` each pass those four fields through unchanged, so the
-#   lemma is one case per writer plus the two list inductions.
+# 2. The sweep's phase 2, and any chain the request runs. `trigger_settlement`
+#    can reach our object two ways. It writes `drained` for the settling
+#    object, which is a different id — `put_preserves_other`. And `fan_out`
+#    reaches our object if it is an awaiter, through `wake`. There
+#    `wake.live` is handed `Promise.is_live`, which also conjoins
+#    `is_pending`, so a settled awaiter takes the False branch and `out` comes
+#    back untouched. That is the same conjunct doing the work as in step 1,
+#    and it is the reason the bug that used to sit at that call site —
+#    `is_expired` where `is_live` belongs — is not merely a wrong answer but
+#    would have made this law false for the expired-but-pending awaiter.
+#    -> chain_preserves_record.
 #
-# Both need the same two lemmas about the document as a list, and those should
-# be proved first and separately:
+# 3. The request itself. Case on `r`:
+#      PromiseGet     — returns `Res{out, ..}`, the document is the swept one.
+#      PromiseCreate  — `promise_create.existing` finds our id present and
+#                       returns `Res{out, ..}` without writing. Where the
+#                       request's id differs, `insert_promise` inserts under
+#                       another id (insert_preserves_other) and every later
+#                       `Document.put` writes that id (put_preserves_other).
+#      PromiseSettle  — our id: `promise_settle.pending` takes the False
+#                       branch, because the promise is not pending, and
+#                       returns without writing. This branch *is*
+#                       first-writer-wins, and it is one `{==}` once the case
+#                       is refined. Another id: `settle` writes there and runs
+#                       the chain, which is step 2.
 #
-#   Objects.put_get   — get(put(os, o), id(o)) is Some{o}, and for any other
-#                       id, get is unchanged.
-#   Objects.ins_get   — get(insert(os, o), id) is unchanged for id /= id(o).
+# Then `linearize` wraps the result in `Document.with_timer_at`, which does not
+# touch objects (timer_at_irrelevant), and emits exactly one SetDocument, so
+# `committed_or` never takes its fallback (committed_is_some).
+#
+# WHERE IT STOPS. Two idioms are missing and both list inductions need them:
+#
+#   (a) Absurdity. The `Nil{}` base case of expire_preserves_settled has the
+#       hypothesis `Objects.get(Nil{}, id) == Some{ob}`, whose left side
+#       computes to `None{}`. The case is vacuous and wants an elimination of
+#       `{None{} == Some{ob} : Maybe<..>}` into anything. Bend has `{a != b :
+#       T}` in its type grammar, so the elimination exists; its spelling is
+#       not in the guide's syntax reference.
+#
+#   (b) Case analysis on a computed Bool inside a proof. `Objects.get` branches
+#       through `Mb.first(Objects.hit(Str.is_eq(Object.id(o), id), o), ..)`,
+#       and the rule that a `match` inspects a parameter and never a computed
+#       value holds in proofs as it does in code. So the `Con{o, rest}` step
+#       needs a view lemma — one that takes `Str.is_eq(Object.id(o), id)` as a
+#       parameter and is matched there — and the induction is threaded through
+#       it. That is a standard shape and writing it blind is where guessing
+#       starts, so it is not written.
+#
+# Neither is a fact about the protocol. Both are the first two things to ask a
+# working compiler.
 
 import Base
 import ./prelude.bend as P
 import ./kernel.bend as K
 import ./LAWS.bend as L
 
-def preserved_settled_promise_record(d, r, now, cfg, id):
+# ---------------------------------------------------------------------------
+# Discharged
+# ---------------------------------------------------------------------------
+
+# A record reads objects and nothing else. Destructuring the document makes
+# both sides the same term: `with_timer_at` rebuilds `Doc` with the same `os`,
+# and `record_at` reaches for `os` alone.
+def timer_at_irrelevant(d, ta, id):
+  match d:
+    case Doc{os, clk, g, ta0, tn}:
+      {==}
+
+# `is_expired` is False by hypothesis, so rewriting the scrutinee to `False{}`
+# lets `sweep.expire.one` take its first case, which is `o`.
+def expire_one_skips_settled(o, now, h):
+  (u, p) = h
+  %p : {K/sweep.expire.one(_, o) == o : K/Object}
+  {==}
+
+# ---------------------------------------------------------------------------
+# Open
+# ---------------------------------------------------------------------------
+
+# Induction on `os`. Base case needs (a); step case needs (b).
+def expire_preserves_settled(os, now, id, ob, h):
   ?TODO
 
-def preserved_promise_birth_fields(d, r, now, cfg, id):
+# Induction on `os`, and (b) twice: once for the `Objects.put` comparison and
+# once for the `Objects.get` that follows it.
+def put_preserves_other(os, o, id, h):
+  ?TODO
+
+# Induction on `os`, and a three-way case on `Dewey.cmp` rather than a Bool,
+# which is the easier version of (b) because `Ord` is matched on directly.
+def insert_preserves_other(os, o, id, h):
+  ?TODO
+
+# The one with real content. Three sub-obligations: `drained` writes one id;
+# `fan_out` folds `wake`, which is the identity on a settled awaiter; `notify`
+# appends sends and never touches the document.
+def chain_preserves_record(out, id2, now, cfg, id):
+  ?TODO
+
+# Case on whether `old` equals `min_deadline`, then read the two branches of
+# `linearize.on`. Both put exactly one `SetDocument` in the list, so
+# `committed` finds it. No induction, just a long computation.
+def committed_is_some(old, out, d2):
+  ?TODO
+
+def preserved_settled_promise_record(d, r, now, cfg, id, ob, h):
+  ?TODO
+
+def preserved_promise_birth_fields(d, r, now, cfg, id, ob):
   ?TODO
